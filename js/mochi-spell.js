@@ -1,5 +1,5 @@
 // js/mochi-spell.js
-// 拼字卡系统（提取自 B 项目 quote-cards.js / quote-spell.js，并融合 A 项目自定义回复库）
+// 拼字卡系统（提取自 B 项目，融合 A 项目回复库，支持全面编辑与删除）
 
 (function() {
     'use strict';
@@ -7,7 +7,7 @@
     const SPELL_QUOTES_KEY = (typeof APP_PREFIX !== 'undefined' ? APP_PREFIX : 'chatapp_') + 'spellQuotes';
     const SPELL_PROBABILITY = 0.3; // 触发拼字卡的概率（30%）
 
-    // B 项目的默认高甜情话库
+    // B 项目的默认高甜情话库（仅在第一次使用时作为初始数据注入）
     const DEFAULT_QUOTES = [
         '我偏爱你', '我只对你这样', '过来，让我抱一下', '别走，再陪我一会儿',
         '你是我的例外', '今天也很喜欢你', '你在，我就安心', '我舍不得你',
@@ -23,27 +23,38 @@
         '我喜欢你在我身边的感觉', '只要是你，久一点也没关系'
     ];
 
-    window.spellQuotes = []; // 用户自定义的词库
+    // 统一存储所有拼字卡内容
+    window.spellLibrary = [];
 
     async function loadQuotes() {
         try {
+            let data = null;
             if (window.localforage) {
-                const data = await localforage.getItem(SPELL_QUOTES_KEY);
-                if (Array.isArray(data)) window.spellQuotes = data;
+                data = await localforage.getItem(SPELL_QUOTES_KEY);
             } else {
-                window.spellQuotes = JSON.parse(localStorage.getItem(SPELL_QUOTES_KEY) || '[]');
+                const raw = localStorage.getItem(SPELL_QUOTES_KEY);
+                data = raw ? JSON.parse(raw) : null;
+            }
+
+            if (Array.isArray(data) && data.length > 0) {
+                window.spellLibrary = data;
+            } else {
+                // 如果是第一次加载，没有数据，就把默认的 46 句放进去
+                window.spellLibrary = DEFAULT_QUOTES.slice();
+                await saveQuotes();
             }
         } catch (e) {
             console.warn('[spell] 加载拼字卡失败:', e);
+            window.spellLibrary = DEFAULT_QUOTES.slice();
         }
     }
 
     async function saveQuotes() {
         try {
             if (window.localforage) {
-                await localforage.setItem(SPELL_QUOTES_KEY, window.spellQuotes);
+                await localforage.setItem(SPELL_QUOTES_KEY, window.spellLibrary);
             } else {
-                localStorage.setItem(SPELL_QUOTES_KEY, JSON.stringify(window.spellQuotes));
+                localStorage.setItem(SPELL_QUOTES_KEY, JSON.stringify(window.spellLibrary));
             }
         } catch (e) {
             console.warn('[spell] 保存拼字卡失败:', e);
@@ -62,21 +73,19 @@
             // 延迟 1.5 秒后，判定是否触发拼字卡
             setTimeout(() => {
                 if (Math.random() < SPELL_PROBABILITY) {
-                    // 1. 获取默认库
-                    let pool = DEFAULT_QUOTES.concat(window.spellQuotes);
+                    // 1. 获取【可编辑的拼字卡库】
+                    let pool = window.spellLibrary.slice();
 
                     // 2. 安全地融合 A 项目的自定义回复库 (customReplies)
                     if (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) {
-                        // 过滤掉空的、纯空格的和太长的（避免拼出来像小作文）
                         const validReplies = customReplies.filter(txt => {
                             return typeof txt === 'string' && txt.trim().length > 0 && txt.length <= 30;
                         });
                         pool = pool.concat(validReplies);
                     }
 
-                    // 3. 去重，防止同一个句子出现两次
+                    // 3. 去重
                     pool = [...new Set(pool)];
-
                     if (pool.length === 0) return;
 
                     // 随机抽取 2 到 4 句
@@ -87,7 +96,6 @@
                         if (!picked.includes(p)) picked.push(p);
                     }
 
-                    // 拼接成一段长文（用逗号拼接）
                     const finalText = picked.join('，');
 
                     if (typeof addMessage === 'function') {
@@ -142,7 +150,7 @@
         const inputRow = document.createElement('div');
         inputRow.style.cssText = 'display:flex;gap:8px;';
         inputRow.innerHTML = `
-            <input type="text" id="mochi-spell-input" placeholder="输入你想拼进去的情话..." style="flex:1;padding:10px 12px;border:1px solid var(--border-color);border-radius:10px;background:var(--primary-bg);color:var(--text-primary);outline:none;font-size:13px;font-family:var(--font-family);">
+            <input type="text" id="mochi-spell-input" placeholder="输入想要添加的情话..." style="flex:1;padding:10px 12px;border:1px solid var(--border-color);border-radius:10px;background:var(--primary-bg);color:var(--text-primary);outline:none;font-size:13px;font-family:var(--font-family);">
             <button id="mochi-spell-add-btn" class="modal-btn modal-btn-primary" style="padding:0 16px;border-radius:10px;font-weight:bold;">添加</button>
         `;
 
@@ -160,39 +168,55 @@
         function renderList() {
             listWrap.innerHTML = '';
             
-            // 1. 渲染自定义库
-            if (window.spellQuotes.length > 0) {
-                const customTitle = document.createElement('div');
-                customTitle.style.cssText = 'font-size:12px;color:var(--text-secondary);font-weight:bold;margin-top:5px;';
-                customTitle.textContent = '我的添加';
-                listWrap.appendChild(customTitle);
-
-                window.spellQuotes.forEach((q, index) => {
-                    const row = document.createElement('div');
-                    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;background:var(--primary-bg);padding:10px;border-radius:10px;border:1px solid var(--border-color);';
-                    row.innerHTML = `
-                        <span style="font-size:13px;color:var(--text-primary);flex:1;word-break:break-all;margin-right:10px;">${q}</span>
-                        <button style="background:none;border:none;color:#ff4757;cursor:pointer;padding:5px;" title="删除"><i class="fas fa-trash-alt"></i></button>
-                    `;
-                    row.querySelector('button').onclick = async () => {
-                        window.spellQuotes.splice(index, 1);
-                        await saveQuotes();
-                        renderList();
-                    };
-                    listWrap.appendChild(row);
-                });
+            if (window.spellLibrary.length === 0) {
+                listWrap.innerHTML = '<div style="text-align:center;padding:30px 0;color:var(--text-secondary);font-size:13px;">拼字卡库空空如也，快添加一句吧~</div>';
+                return;
             }
 
-            // 2. 渲染默认库
-            const sysTitle = document.createElement('div');
-            sysTitle.style.cssText = 'font-size:12px;color:var(--text-secondary);font-weight:bold;margin-top:10px;';
-            sysTitle.textContent = '系统预设情话';
-            listWrap.appendChild(sysTitle);
-
-            DEFAULT_QUOTES.forEach(q => {
+            window.spellLibrary.forEach((q, index) => {
                 const row = document.createElement('div');
-                row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;background:var(--primary-bg);padding:10px;border-radius:10px;border:1px dashed var(--border-color);opacity:0.7;';
-                row.innerHTML = `<span style="font-size:13px;color:var(--text-primary);flex:1;word-break:break-all;">${q}</span>`;
+                row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;background:var(--primary-bg);padding:10px;border-radius:10px;border:1px solid var(--border-color);gap:8px;';
+                
+                // 文字
+                const textSpan = document.createElement('span');
+                textSpan.style.cssText = 'font-size:13px;color:var(--text-primary);flex:1;word-break:break-all;';
+                textSpan.textContent = q;
+
+                // 操作按钮容器
+                const btnGroup = document.createElement('div');
+                btnGroup.style.cssText = 'display:flex;gap:6px;flex-shrink:0;';
+
+                // 编辑按钮
+                const editBtn = document.createElement('button');
+                editBtn.style.cssText = 'background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:5px;font-size:13px;';
+                editBtn.innerHTML = '<i class="fas fa-edit"></i>';
+                editBtn.onclick = async () => {
+                    const newText = prompt('修改这句话：', q);
+                    if (newText !== null && newText.trim() !== '') {
+                        window.spellLibrary[index] = newText.trim();
+                        await saveQuotes();
+                        renderList();
+                        if (typeof showNotification === 'function') showNotification('修改成功', 'success');
+                    }
+                };
+
+                // 删除按钮
+                const delBtn = document.createElement('button');
+                delBtn.style.cssText = 'background:none;border:none;color:#ff4757;cursor:pointer;padding:5px;font-size:13px;';
+                delBtn.innerHTML = '<i class="fas fa-trash-alt"></i>';
+                delBtn.onclick = async () => {
+                    if (confirm(`确定要删除「${q}」吗？`)) {
+                        window.spellLibrary.splice(index, 1);
+                        await saveQuotes();
+                        renderList();
+                    }
+                };
+
+                btnGroup.appendChild(editBtn);
+                btnGroup.appendChild(delBtn);
+
+                row.appendChild(textSpan);
+                row.appendChild(btnGroup);
                 listWrap.appendChild(row);
             });
         }
@@ -205,11 +229,11 @@
             if (!val) return;
             const lines = val.split('\n').map(s => s.trim()).filter(Boolean);
             if (lines.length > 0) {
-                lines.forEach(l => window.spellQuotes.push(l));
+                lines.forEach(l => window.spellLibrary.push(l));
                 await saveQuotes();
                 inputEl.value = '';
                 renderList();
-                if (typeof showNotification === 'function') showNotification(`成功添加 ${lines.length} 句情话`, 'success');
+                if (typeof showNotification === 'function') showNotification(`成功添加 ${lines.length} 句`, 'success');
             }
         };
 
@@ -242,7 +266,7 @@
         await loadQuotes();
         const boot = () => {
             hookSimulateReply();
-            setTimeout(addSpellEntry, 1500); // 延迟一点等 A 的 UI 加载
+            setTimeout(addSpellEntry, 1500); 
         };
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => setTimeout(boot, 300));
