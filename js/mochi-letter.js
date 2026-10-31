@@ -1,0 +1,289 @@
+// js/mochi-letter.js
+// 他的来信模块（字卡拼写信件，10%概率触发，支持未读提示）
+
+(function() {
+    'use strict';
+
+    const LETTER_STORAGE_KEY = (typeof APP_PREFIX !== 'undefined' ? APP_PREFIX : 'chatapp_') + 'mochiLetters';
+    let letters = [];
+    let isLetterOpen = false;
+
+    function injectStyle() {
+        if (document.getElementById('mochi-letter-style')) return;
+        const style = document.createElement('style');
+        style.id = 'mochi-letter-style';
+        style.textContent = `
+            #mochi-letter-container { position: fixed; inset: 0; z-index: 99995; background: #f4f1ea; color: #333; display: none; flex-direction: column; font-family: "Georgia", "Noto Serif SC", serif; }
+            html[data-theme="dark"] #mochi-letter-container { background: #1a1a1a; color: #d3d3d3; }
+            #mochi-letter-container.show { display: flex; animation: mlSlideIn 0.3s ease; }
+            
+            .ml-header { height: 56px; display: flex; align-items: center; padding: 0 16px; background: rgba(255,255,255,0.8); border-bottom: 1px solid #e0dcd3; flex-shrink: 0; z-index: 10; }
+            html[data-theme="dark"] .ml-header { background: rgba(30,30,30,0.8); border-bottom-color: #333; }
+            .ml-back-btn { background: none; border: none; font-size: 20px; color: inherit; cursor: pointer; padding: 8px; margin-right: 10px; }
+            .ml-title { font-size: 17px; font-weight: bold; flex: 1; text-align: center; letter-spacing: 1px; }
+            
+            .ml-list-area { flex: 1; overflow-y: auto; padding: 20px 16px; display: flex; flex-direction: column; gap: 16px; }
+            
+            .ml-card { background: #fff; border-radius: 12px; padding: 16px 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); cursor: pointer; position: relative; border: 1px solid #e8e4db; }
+            html[data-theme="dark"] .ml-card { background: #2a2a2a; border-color: #444; }
+            .ml-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.08); }
+            
+            .ml-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px dashed #e8e4db; padding-bottom: 10px; }
+            html[data-theme="dark"] .ml-card-header { border-bottom-color: #444; }
+            .ml-sender { font-size: 15px; font-weight: bold; color: #8c6b4a; }
+            .ml-date { font-size: 12px; color: #999; font-family: monospace; }
+            .ml-preview { font-size: 14px; line-height: 1.6; color: #666; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+            html[data-theme="dark"] .ml-preview { color: #aaa; }
+            
+            .ml-unread-dot { position: absolute; top: 16px; right: 16px; width: 8px; height: 8px; background: #ff4757; border-radius: 50%; }
+            
+            /* 信纸详情 */
+            .ml-detail { flex: 1; overflow-y: auto; padding: 24px 20px; display: none; flex-direction: column; }
+            .ml-paper { background: #fffcf5; border-radius: 4px; padding: 30px 24px; box-shadow: 0 2px 20px rgba(0,0,0,0.06); position: relative; border: 1px solid #f0e6d2; min-height: 80%; }
+            html[data-theme="dark"] .ml-paper { background: #1e1c19; border-color: #3a352e; }
+            .ml-paper::before { content: ''; position: absolute; left: 40px; top: 0; bottom: 0; width: 1px; background: rgba(200, 50, 50, 0.1); }
+            
+            .ml-greeting { font-size: 16px; font-weight: bold; margin-bottom: 20px; color: #8c6b4a; }
+            .ml-content { font-size: 15px; line-height: 2.2; letter-spacing: 0.5px; white-space: pre-wrap; word-break: break-word; text-indent: 2em; }
+            .ml-sign { margin-top: 30px; text-align: right; font-size: 15px; font-style: italic; color: #8c6b4a; }
+            
+            .ml-detail-actions { margin-top: 20px; display: flex; justify-content: center; gap: 16px; }
+            .ml-btn { padding: 8px 20px; border-radius: 20px; border: 1px solid #d1c7b7; background: transparent; color: #8c6b4a; cursor: pointer; font-size: 14px; transition: all 0.2s; }
+            .ml-btn:hover { background: #f0e6d2; }
+            html[data-theme="dark"] .ml-btn { border-color: #444; color: #d3d3d3; }
+            html[data-theme="dark"] .ml-btn:hover { background: #333; }
+            
+            @keyframes mlSlideIn { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function addLetterEntry() {
+        const advList = document.querySelector('#advanced-modal .settings-item-list');
+        if (!advList || document.getElementById('letter-function')) return;
+        
+        // 如果已经有了，就只更新红点
+        let item = document.getElementById('letter-function');
+        if (!item) {
+            item = document.createElement('div');
+            item.className = 'settings-item';
+            item.id = 'letter-function';
+            item.addEventListener('click', () => {
+                if (typeof hideModal === 'function') hideModal(document.getElementById('advanced-modal'));
+                openLetterBox();
+            });
+            advList.appendChild(item);
+        }
+        
+        const unread = letters.filter(l => !l.read).length;
+        item.innerHTML = `<i class="fas fa-envelope-open-text"></i><span>他的来信 ${unread > 0 ? `<span style="background:#ff4757;color:#fff;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:top;">${unread}</span>` : ''}</span>`;
+    }
+
+    async function loadLetters() {
+        try {
+            if (window.localforage) {
+                const data = await localforage.getItem(LETTER_STORAGE_KEY);
+                if (Array.isArray(data)) letters = data;
+            } else {
+                letters = JSON.parse(localStorage.getItem(LETTER_STORAGE_KEY) || '[]');
+            }
+        } catch (e) { letters = []; }
+    }
+
+    async function saveLetters() {
+        try {
+            if (window.localforage) await localforage.setItem(LETTER_STORAGE_KEY, letters);
+            else localStorage.setItem(LETTER_STORAGE_KEY, JSON.stringify(letters));
+            addLetterEntry(); // 更新红点
+        } catch (e) {}
+    }
+
+    // 生成一封信
+    function generateLetter() {
+        const pool = (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) ? customReplies.filter(t => typeof t === 'string' && t.trim()) : [];
+        if (pool.length === 0) return null;
+
+        // 随机抽取 10 到 50 张字卡
+        const count = Math.floor(Math.random() * 41) + 10; 
+        let lines = [];
+        
+        for (let i = 0; i < count; i++) {
+            const sentence = pool[Math.floor(Math.random() * pool.length)].trim();
+            // 防止一句话重复出现太多次，如果连续重复就重新抽
+            if (lines.length > 0 && lines[lines.length - 1] === sentence) {
+                i--; continue;
+            }
+            lines.push(sentence);
+        }
+
+        // 拼接：用换行和逗号或者句号连接，让它像一段完整的话
+        const content = lines.join('，\n') + '。';
+
+        return {
+            id: 'l_' + Date.now(),
+            ts: Date.now(),
+            content: content,
+            read: false
+        };
+    }
+
+    // 挂载触发机制
+    function hookSimulateReply() {
+        if (typeof window.simulateReply !== 'function' || window.simulateReply._mochiLetterHooked) return;
+        const original = window.simulateReply;
+        
+        const wrapped = function() {
+            try { original.apply(this, arguments); } catch (e) {}
+            
+            // 10% 概率触发写信
+            if (Math.random() < 0.10) {
+                const newLetter = generateLetter();
+                if (newLetter) {
+                    setTimeout(async () => {
+                        letters.unshift(newLetter);
+                        // 限制最多保留 30 封信
+                        if (letters.length > 30) letters.length = 30;
+                        await saveLetters();
+                        
+                        const taName = (typeof settings !== 'undefined' && settings.partnerName) ? settings.partnerName : '梦角';
+                        if (typeof showNotification === 'function') {
+                            showNotification(`💌 收到一封来自 ${taName} 的来信，请前往【高级功能-他的来信】查看`, 'info', 5000);
+                        }
+                        // 如果在信箱里，刷新界面
+                        if (isLetterOpen) renderLetterUI();
+                    }, 2000);
+                }
+            }
+        };
+        wrapped._mochiLetterHooked = true;
+        window.simulateReply = wrapped;
+    }
+
+    function openLetterBox() {
+        let container = document.getElementById('mochi-letter-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'mochi-letter-container';
+            document.body.appendChild(container);
+        }
+        container.classList.add('show');
+        isLetterOpen = true;
+        renderLetterUI();
+    }
+
+    function renderLetterUI() {
+        const container = document.getElementById('mochi-letter-container');
+        const taName = (typeof settings !== 'undefined' && settings.partnerName) ? settings.partnerName : '梦角';
+        const myName = (typeof settings !== 'undefined' && settings.myName) ? settings.myName : '我';
+
+        letters.sort((a, b) => b.ts - a.ts);
+
+        let html = `
+            <div class="ml-header">
+                <button class="ml-back-btn" id="ml-close-btn"><i class="fas fa-arrow-left"></i></button>
+                <div class="ml-title">他的来信</div>
+            </div>
+            <div class="ml-list-area" id="ml-list-area">
+        `;
+
+        if (letters.length === 0) {
+            html += `<div style="text-align:center; margin-top:50px; color:#999; font-family:sans-serif; font-size:14px;">信箱空空如也，和他多聊聊天吧，他可能会悄悄写信给你哦。</div>`;
+        } else {
+            letters.forEach(l => {
+                const dateStr = new Date(l.ts).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+                const preview = l.content.replace(/\n/g, ' ').slice(0, 30) + '...';
+                html += `
+                    <div class="ml-card" onclick="window._mlOpenDetail('${l.id}')">
+                        ${!l.read ? `<div class="ml-unread-dot"></div>` : ''}
+                        <div class="ml-card-header">
+                            <div class="ml-sender">${taName} 的来信</div>
+                            <div class="ml-date">${dateStr}</div>
+                        </div>
+                        <div class="ml-preview">${preview}</div>
+                    </div>
+                `;
+            });
+        }
+
+        html += `</div>`;
+
+        // 详情弹窗层
+        html += `
+            <div class="ml-detail" id="ml-detail">
+                <div class="ml-paper">
+                    <div class="ml-greeting">亲爱的 ${myName}：</div>
+                    <div class="ml-content" id="ml-detail-content"></div>
+                    <div class="ml-sign" id="ml-detail-sign"></div>
+                </div>
+                <div class="ml-detail-actions">
+                    <button class="ml-btn" onclick="window._mlDeleteCurrent()">撕毁信件</button>
+                    <button class="ml-btn" onclick="window._mlCloseDetail()">收起</button>
+                </div>
+            </div>
+        `;
+
+        container.innerHTML = html;
+        bindEvents();
+    }
+
+    let currentViewingId = null;
+
+    window._mlOpenDetail = async function(id) {
+        const l = letters.find(x => x.id === id);
+        if (!l) return;
+        currentViewingId = id;
+        
+        // 标记已读
+        if (!l.read) {
+            l.read = true;
+            await saveLetters();
+            renderLetterUI(); // 刷新列表红点
+        }
+
+        const taName = (typeof settings !== 'undefined' && settings.partnerName) ? settings.partnerName : '梦角';
+        const dateStr = new Date(l.ts).toLocaleDateString('zh-CN', { year:'numeric', month:'long', day:'numeric' });
+        
+        document.getElementById('ml-list-area').style.display = 'none';
+        document.getElementById('ml-detail').style.display = 'flex';
+        document.getElementById('ml-detail-content').textContent = l.content;
+        document.getElementById('ml-detail-sign').innerHTML = `${taName}<br><span style="font-size:12px;color:#999;margin-top:8px;display:inline-block;">${dateStr}</span>`;
+    };
+
+    window._mlCloseDetail = function() {
+        currentViewingId = null;
+        document.getElementById('ml-detail').style.display = 'none';
+        document.getElementById('ml-list-area').style.display = 'flex';
+    };
+
+    window._mlDeleteCurrent = async function() {
+        if (!currentViewingId) return;
+        if (!confirm('确定要撕毁这封信吗？撕毁后将无法恢复。')) return;
+        letters = letters.filter(x => x.id !== currentViewingId);
+        await saveLetters();
+        window._mlCloseDetail();
+        renderLetterUI();
+        if (typeof showNotification === 'function') showNotification('信件已撕毁', 'info');
+    };
+
+    function bindEvents() {
+        document.getElementById('ml-close-btn').onclick = () => {
+            document.getElementById('mochi-letter-container').classList.remove('show');
+            isLetterOpen = false;
+        };
+    }
+
+    // 初始化
+    loadLetters().then(() => {
+        injectStyle();
+        hookSimulateReply();
+        
+        // 定时尝试挂载入口（因为 A 项目的 UI 是动态的）
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => setInterval(addLetterEntry, 2000));
+        } else {
+            setInterval(addLetterEntry, 2000);
+        }
+    });
+
+    window.openMochiLetterBox = openLetterBox;
+})();
