@@ -1,5 +1,5 @@
 // js/mochi-letter.js
-// 他的来信模块（修复长文本遮挡、增加展开收起、支持背景）
+// 他的来信模块（去除了背景遮罩，保留原生文字颜色）
 
 (function() {
     'use strict';
@@ -11,7 +11,7 @@
     let letterBgImage = '';
     let isLetterOpen = false;
     let currentViewingId = null;
-    let isExpanded = false; // 是否展开全文
+    let isExpanded = false; 
 
     function injectStyle() {
         if (document.getElementById('mochi-letter-style')) return;
@@ -54,38 +54,29 @@
             }
             html[data-theme="dark"] .ml-paper { background-color: #1e1c19; border-color: #3a352e; }
             
-            .ml-paper.has-bg::before {
-                content: ''; position: absolute; inset: 0; background: rgba(0,0,0,0.35); border-radius: inherit; z-index: 0; pointer-events: none;
-            }
-            .ml-paper.has-bg .ml-greeting, .ml-paper.has-bg .ml-content, .ml-paper.has-bg .ml-sign {
-                position: relative; z-index: 1; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
-            }
-            
             .ml-greeting { font-size: 16px; font-weight: bold; margin-bottom: 20px; color: #8c6b4a; }
             
-            /* 核心修改：折叠机制 */
+            /* 折叠机制 */
             .ml-content { 
                 font-size: 15.5px; line-height: 2.2; letter-spacing: 0.5px; word-break: break-word; text-indent: 2em; text-align: justify;
-                max-height: 35vh; /* 默认最高只显示屏幕高度的35% */
+                max-height: 35vh; 
                 overflow: hidden; 
                 position: relative;
                 transition: max-height 0.3s ease;
             }
             .ml-content.expanded { max-height: none; }
-            /* 折叠时底部加渐变遮罩，提示下面还有字 */
+            /* 折叠时底部渐变，适应深浅色模式 */
             .ml-content:not(.expanded)::after {
                 content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 40px;
                 background: linear-gradient(transparent, #fffcf5);
             }
             html[data-theme="dark"] .ml-content:not(.expanded)::after { background: linear-gradient(transparent, #1e1c19); }
-            .ml-paper.has-bg .ml-content:not(.expanded)::after { background: linear-gradient(transparent, rgba(0,0,0,0.4)); }
 
             .ml-expand-btn { display: block; width: 100%; text-align: center; font-size: 13px; color: #8c6b4a; cursor: pointer; margin-top: 10px; font-weight: bold; z-index: 2; position: relative; }
-            .ml-paper.has-bg .ml-expand-btn { color: #fff; }
 
             .ml-sign { margin-top: 20px; text-align: right; font-size: 15px; font-style: italic; color: #8c6b4a; padding-right: 10px; }
             
-            /* 底部按钮固定区，永远在屏幕最下方 */
+            /* 底部按钮固定区 */
             .ml-detail-actions { 
                 flex-shrink: 0; 
                 background: #f4f1ea; 
@@ -244,7 +235,6 @@
 
         html += `</div>`;
 
-        // 详情层：使用 scroll-area 包住信纸
         html += `
             <div class="ml-detail" id="ml-detail">
                 <div class="ml-scroll-area">
@@ -271,7 +261,7 @@
         const l = letters.find(x => x.id === id);
         if (!l) return;
         currentViewingId = id;
-        isExpanded = false; // 每次打开默认折叠
+        isExpanded = false;
         
         if (!l.read) {
             l.read = true;
@@ -289,9 +279,8 @@
         contentEl.textContent = l.content;
         contentEl.classList.remove('expanded');
 
-        // 判断是否需要显示“展开全文”按钮
         const expandBtn = document.getElementById('ml-expand-btn');
-        if (l.content.length > 150) { // 如果字数超过 150，就显示展开按钮
+        if (l.content.length > 150) { 
             expandBtn.style.display = 'block';
             expandBtn.innerHTML = '展开全文 ▼';
         } else {
@@ -303,10 +292,8 @@
         const paper = document.getElementById('ml-paper-bg');
         if (letterBgImage) {
             paper.style.backgroundImage = `url(${letterBgImage})`;
-            paper.classList.add('has-bg');
         } else {
             paper.style.backgroundImage = '';
-            paper.classList.remove('has-bg');
         }
     };
 
@@ -320,7 +307,6 @@
         } else {
             contentEl.classList.remove('expanded');
             btn.innerHTML = '展开全文 ▼';
-            // 收起时滚动到信纸顶部，方便阅读
             document.querySelector('.ml-scroll-area').scrollTop = 0;
         }
     };
@@ -363,7 +349,6 @@
                             await saveLetterBg(b64);
                             const paper = document.getElementById('ml-paper-bg');
                             paper.style.backgroundImage = `url(${b64})`;
-                            paper.classList.add('has-bg');
                             if (typeof showNotification === 'function') showNotification('信纸背景已更新', 'success');
                         }
                     } catch (err) {}
