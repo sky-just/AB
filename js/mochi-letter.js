@@ -1,5 +1,5 @@
 // js/mochi-letter.js
-// 他的来信模块（去除了背景遮罩，保留原生文字颜色）
+// 他的来信模块（概率提升至30%）
 
 (function() {
     'use strict';
@@ -42,10 +42,7 @@
             
             .ml-unread-dot { position: absolute; top: 16px; right: 16px; width: 8px; height: 8px; background: #ff4757; border-radius: 50%; }
             
-            /* 信纸详情排版大修 */
             .ml-detail { flex: 1; display: none; flex-direction: column; height: 100%; overflow: hidden; }
-            
-            /* 滚动区域只包住信纸，不包按钮 */
             .ml-scroll-area { flex: 1; overflow-y: auto; padding: 24px 16px 10px 16px; }
             
             .ml-paper { 
@@ -56,7 +53,6 @@
             
             .ml-greeting { font-size: 16px; font-weight: bold; margin-bottom: 20px; color: #8c6b4a; }
             
-            /* 折叠机制 */
             .ml-content { 
                 font-size: 15.5px; line-height: 2.2; letter-spacing: 0.5px; word-break: break-word; text-indent: 2em; text-align: justify;
                 max-height: 35vh; 
@@ -65,7 +61,6 @@
                 transition: max-height 0.3s ease;
             }
             .ml-content.expanded { max-height: none; }
-            /* 折叠时底部渐变，适应深浅色模式 */
             .ml-content:not(.expanded)::after {
                 content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 40px;
                 background: linear-gradient(transparent, #fffcf5);
@@ -76,7 +71,6 @@
 
             .ml-sign { margin-top: 20px; text-align: right; font-size: 15px; font-style: italic; color: #8c6b4a; padding-right: 10px; }
             
-            /* 底部按钮固定区 */
             .ml-detail-actions { 
                 flex-shrink: 0; 
                 background: #f4f1ea; 
@@ -169,7 +163,9 @@
         const original = window.simulateReply;
         const wrapped = function() {
             try { original.apply(this, arguments); } catch (e) {}
-            if (Math.random() < 0.10) {
+            
+            // 【修改点】概率从 10% 提升到了 30%
+            if (Math.random() < 0.30) {
                 const newLetter = generateLetter();
                 if (newLetter) {
                     setTimeout(async () => {
