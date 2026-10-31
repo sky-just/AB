@@ -1,19 +1,20 @@
 // js/mochi-feed.js
-// 仿微信朋友圈模块（支持换背景、评论、发表提示、选图预览、删除动态）
+// 仿微信朋友圈模块（支持换背景、评论、发表提示、选图预览、删除动态、未读消息）
 
 (function() {
     'use strict';
 
     const FEED_STORAGE_KEY = (typeof APP_PREFIX !== 'undefined' ? APP_PREFIX : 'chatapp_') + 'mochiFeedPosts';
     const FEED_BG_KEY = (typeof APP_PREFIX !== 'undefined' ? APP_PREFIX : 'chatapp_') + 'mochiFeedBg';
+    const FEED_NOTICE_KEY = (typeof APP_PREFIX !== 'undefined' ? APP_PREFIX : 'chatapp_') + 'mochiFeedNotices';
     
     let feedPosts = [];
     let feedBgImage = '';
+    let feedNotices = []; // 未读消息 [{id, type, text, ts, read}]
     let isFeedOpen = false;
-    let pendingImages = []; // 待发布的图片
-    let replyTarget = null; // 当前正在回复的目标 { pid, name }
+    let pendingImages = []; 
+    let replyTarget = null; 
 
-    // 注入专属 CSS
     function injectStyle() {
         if (document.getElementById('mochi-feed-style')) return;
         const style = document.createElement('style');
@@ -25,6 +26,11 @@
             
             .mf-header { height: 220px; position: relative; background: linear-gradient(135deg, #2c3e50, #000); background-size: cover; background-position: center; cursor: pointer; flex-shrink: 0; }
             .mf-back-btn { position: absolute; top: 16px; left: 16px; background: rgba(0,0,0,0.4); color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; z-index: 10; }
+            
+            .mf-notice-btn { position: absolute; top: 16px; right: 16px; background: rgba(0,0,0,0.4); color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; z-index: 10; }
+            .mf-notice-badge { position: absolute; top: -2px; right: -2px; background: #ff4757; color: #fff; font-size: 10px; font-weight: bold; border-radius: 10px; padding: 2px 6px; border: 1px solid #fff; }
+            html[data-theme="dark"] .mf-notice-badge { border-color: #111; }
+
             .mf-user-info { position: absolute; right: 20px; bottom: -20px; display: flex; align-items: center; gap: 12px; z-index: 10; }
             .mf-user-name { font-size: 16px; font-weight: 600; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.5); margin-bottom: 20px; }
             .mf-user-avatar { width: 70px; height: 70px; border-radius: 12px; border: 3px solid #fff; background: #eee; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -64,7 +70,7 @@
             .mf-comment-item { margin-bottom: 2px; }
             .mf-c-name { color: #576b95; font-weight: 500; }
             
-            .mf-pub-wrap { position: absolute; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #e5e5e5; display: flex; flex-direction: column; z-index: 10; transition: height 0.2s; }
+            .mf-pub-wrap { position: absolute; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #e5e5e5; display: flex; flex-direction: column; z-index: 10; }
             html[data-theme="dark"] .mf-pub-wrap { background: #1a1a1a; border-top-color: #333; }
             
             .mf-preview-area { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px 0; }
@@ -78,22 +84,33 @@
             .mf-pub-btn { background: #07c160; color: #fff; border: none; padding: 8px 16px; border-radius: 20px; font-weight: 600; cursor: pointer; }
             .mf-pub-camera { color: #576b95; font-size: 20px; cursor: pointer; padding: 6px; }
             
-            .mf-toast { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 14px; z-index: 99999; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
-            .mf-toast.show { opacity: 1; }
+            /* 全局 Toast，挂载在 body 上，不会被刷新冲掉 */
+            .mf-global-toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.75); color: #fff; padding: 12px 24px; border-radius: 8px; font-size: 14px; z-index: 999999; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+            .mf-global-toast.show { opacity: 1; }
 
-            @keyframes mfSlideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+            /* 消息面板 */
+            .mf-notice-panel { position: absolute; top: 60px; right: 16px; width: 280px; max-height: 350px; background: #fff; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); z-index: 9999; display: none; flex-direction: column; overflow: hidden; }
+            html[data-theme="dark"] .mf-notice-panel { background: #2a2a2a; }
+            .mf-notice-panel.show { display: flex; }
+            .mf-notice-header { padding: 12px; font-weight: bold; font-size: 14px; border-bottom: 1px solid #eee; text-align: center; color: #333; }
+            html[data-theme="dark"] .mf-notice-header { border-bottom-color: #444; color: #eee; }
+            .mf-notice-list { flex: 1; overflow-y: auto; }
+            .mf-notice-item { padding: 12px; border-bottom: 1px solid #f5f5f5; font-size: 13px; line-height: 1.4; }
+            html[data-theme="dark"] .mf-notice-item { border-bottom-color: #333; }
+            .mf-notice-item .mf-n-name { color: #576b95; font-weight: bold; margin-right: 4px; }
+            .mf-notice-empty { padding: 20px; text-align: center; color: #999; font-size: 13px; }
         `;
         document.head.appendChild(style);
     }
 
+    // 修复被覆盖的问题：Toast 放在 body 里
     function showToast(msg) {
-        let container = document.getElementById('mochi-feed-container');
-        let t = document.getElementById('mf-toast-el');
+        let t = document.getElementById('mf-global-toast');
         if (!t) {
             t = document.createElement('div');
-            t.id = 'mf-toast-el';
-            t.className = 'mf-toast';
-            container.appendChild(t);
+            t.id = 'mf-global-toast';
+            t.className = 'mf-global-toast';
+            document.body.appendChild(t);
         }
         t.textContent = msg;
         t.classList.add('show');
@@ -115,14 +132,8 @@
         advList.appendChild(item);
     }
 
-    function getMyAvatar() {
-        const img = document.querySelector('#my-avatar img');
-        return img ? img.src : '';
-    }
-    function getTaAvatar() {
-        const img = document.querySelector('#partner-avatar img');
-        return img ? img.src : '';
-    }
+    function getMyAvatar() { const img = document.querySelector('#my-avatar img'); return img ? img.src : ''; }
+    function getTaAvatar() { const img = document.querySelector('#partner-avatar img'); return img ? img.src : ''; }
 
     async function loadFeed() {
         try {
@@ -131,9 +142,12 @@
                 if (Array.isArray(data)) feedPosts = data;
                 const bg = await localforage.getItem(FEED_BG_KEY);
                 if (bg) feedBgImage = bg;
+                const notices = await localforage.getItem(FEED_NOTICE_KEY);
+                if (Array.isArray(notices)) feedNotices = notices;
             } else {
                 feedPosts = JSON.parse(localStorage.getItem(FEED_STORAGE_KEY) || '[]');
                 feedBgImage = localStorage.getItem(FEED_BG_KEY) || '';
+                feedNotices = JSON.parse(localStorage.getItem(FEED_NOTICE_KEY) || '[]');
             }
         } catch (e) { feedPosts = []; }
         if (feedPosts.length === 0) setTimeout(triggerTaAutoPost, 3000);
@@ -146,12 +160,27 @@
         } catch (e) {}
     }
 
+    async function saveNotices() {
+        try {
+            if (window.localforage) await localforage.setItem(FEED_NOTICE_KEY, feedNotices);
+            else localStorage.setItem(FEED_NOTICE_KEY, JSON.stringify(feedNotices));
+        } catch (e) {}
+    }
+
     async function saveBg(bg) {
         feedBgImage = bg;
         try {
             if (window.localforage) await localforage.setItem(FEED_BG_KEY, bg);
             else localStorage.setItem(FEED_BG_KEY, bg);
         } catch (e) {}
+    }
+
+    // 添加未读消息
+    async function addNotice(type, text) {
+        feedNotices.unshift({ id: 'n_' + Date.now(), type, text, ts: Date.now(), read: false });
+        if (feedNotices.length > 50) feedNotices.length = 50;
+        await saveNotices();
+        if (isFeedOpen) renderFeedUI();
     }
 
     function openFeed() {
@@ -175,10 +204,25 @@
 
         feedPosts.sort((a, b) => b.ts - a.ts);
         const bgStyle = feedBgImage ? `background-image: url(${feedBgImage}); background-size: cover; background-position: center;` : '';
+        const unreadCount = feedNotices.filter(n => !n.read).length;
 
         let html = `
             <div class="mf-header" id="mf-header-bg" style="${bgStyle}" title="点击更换朋友圈背景">
                 <button class="mf-back-btn" id="mf-close-btn"><i class="fas fa-arrow-left"></i></button>
+                
+                <button class="mf-notice-btn" id="mf-notice-btn">
+                    <i class="fas fa-bell"></i>
+                    ${unreadCount > 0 ? `<span class="mf-notice-badge">${unreadCount > 99 ? '99+' : unreadCount}</span>` : ''}
+                </button>
+
+                <div class="mf-notice-panel" id="mf-notice-panel">
+                    <div class="mf-notice-header">新消息</div>
+                    <div class="mf-notice-list" id="mf-notice-list">
+                        ${feedNotices.length === 0 ? '<div class="mf-notice-empty">暂无消息</div>' : 
+                          feedNotices.map(n => `<div class="mf-notice-item">${n.text}</div>`).join('')}
+                    </div>
+                </div>
+
                 <div class="mf-user-info">
                     <div class="mf-user-name">${myName}</div>
                     <div class="mf-user-avatar">${myAv ? `<img src="${myAv}">` : '<i class="fas fa-user" style="color:#aaa;font-size:24px"></i>'}</div>
@@ -236,7 +280,6 @@
             });
         }
 
-        // 底部发布/回复区
         html += `
             </div>
             <div class="mf-pub-wrap">
@@ -251,17 +294,14 @@
 
         container.innerHTML = html;
         
-        // 恢复之前的输入状态
-        if (replyTarget) {
-            document.getElementById('mf-pub-text').placeholder = `评论 ${replyTarget.name}：`;
-        }
-        renderPreview(); // 恢复图片预览
+        if (replyTarget) document.getElementById('mf-pub-text').placeholder = `评论 ${replyTarget.name}：`;
+        
+        renderPreview(); 
         bindEvents();
         
         setTimeout(() => { const list = document.getElementById('mf-list'); if (list) list.scrollTop = 0; }, 50);
     }
 
-    // 渲染待发布图片
     function renderPreview() {
         const area = document.getElementById('mf-preview-area');
         if (!area) return;
@@ -274,10 +314,7 @@
         });
     }
 
-    window._mfRemoveImg = function(idx) {
-        pendingImages.splice(idx, 1);
-        renderPreview();
-    };
+    window._mfRemoveImg = function(idx) { pendingImages.splice(idx, 1); renderPreview(); };
 
     window._mfDelete = async function(pid) {
         if (!confirm('确定删除这条动态吗？')) return;
@@ -290,10 +327,7 @@
     window._mfSetReply = function(pid, name) {
         replyTarget = { pid, name };
         const input = document.getElementById('mf-pub-text');
-        if (input) {
-            input.placeholder = `评论 ${name}：`;
-            input.focus();
-        }
+        if (input) { input.placeholder = `评论 ${name}：`; input.focus(); }
     };
 
     window._mfLike = async function(pid) {
@@ -311,6 +345,9 @@
                     if (!post.likes.includes(taName)) {
                         post.likes.push(taName);
                         await saveFeed();
+                        if (post.author === 'me') {
+                          addNotice('like', `<span class="mf-n-name">${taName}</span> 赞了你的动态`);
+                        }
                         if (isFeedOpen) renderFeedUI();
                     }
                 }, 2000 + Math.random() * 2000);
@@ -326,13 +363,34 @@
             replyTarget = null;
         };
 
+        // 消息面板开关
+        const noticeBtn = document.getElementById('mf-notice-btn');
+        const noticePanel = document.getElementById('mf-notice-panel');
+        noticeBtn.onclick = async (e) => {
+            e.stopPropagation();
+            const isShowing = noticePanel.classList.contains('show');
+            if (isShowing) {
+                noticePanel.classList.remove('show');
+            } else {
+                noticePanel.classList.add('show');
+                // 标记已读
+                if (feedNotices.some(n => !n.read)) {
+                    feedNotices.forEach(n => n.read = true);
+                    await saveNotices();
+                    renderFeedUI();
+                }
+            }
+        };
+
         const bgPicker = document.createElement('input');
-        bgPicker.type = 'file';
-        bgPicker.accept = 'image/*';
-        bgPicker.style.display = 'none';
+        bgPicker.type = 'file'; bgPicker.accept = 'image/*'; bgPicker.style.display = 'none';
         document.body.appendChild(bgPicker);
 
-        document.getElementById('mf-header-bg').onclick = () => bgPicker.click();
+        document.getElementById('mf-header-bg').onclick = (e) => {
+            if (e.target.closest('.mf-notice-btn') || e.target.closest('.mf-notice-panel')) return;
+            bgPicker.click();
+        };
+        
         bgPicker.onchange = async (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -349,10 +407,7 @@
         };
 
         const imgPicker = document.createElement('input');
-        imgPicker.type = 'file';
-        imgPicker.accept = 'image/*';
-        imgPicker.multiple = true;
-        imgPicker.style.display = 'none';
+        imgPicker.type = 'file'; imgPicker.accept = 'image/*'; imgPicker.multiple = true; imgPicker.style.display = 'none';
         document.body.appendChild(imgPicker);
 
         document.getElementById('mf-pick-img').onclick = () => imgPicker.click();
@@ -381,7 +436,6 @@
             const text = input.value.trim();
             if (!text && pendingImages.length === 0) return;
 
-            // 判断是评论还是发动态
             if (replyTarget) {
                 const post = feedPosts.find(x => x.id === replyTarget.pid);
                 if (post) {
@@ -392,10 +446,9 @@
                     
                     showToast('评论成功');
                     input.value = '';
-           replyTarget = null;
+                    replyTarget = null;
                     renderFeedUI();
 
-                    // 触发 TA 回复评论
                     setTimeout(async () => {
                         const taName = (typeof settings !== 'undefined' && settings.partnerName) ? settings.partnerName : '梦角';
                         let taReply = "嗯嗯，确实。";
@@ -404,21 +457,17 @@
                         }
                         post.comments.push({ author: taName, content: taReply });
                         await saveFeed();
+                        if (post.author === 'me') {
+                            addNotice('comment', `<span class="mf-n-name">${taName}</span> 回复了你的评论：${taReply}`);
+                        }
                         if (isFeedOpen) renderFeedUI();
                     }, 2000 + Math.random() * 3000);
                 }
                 return;
             }
 
-            // 发新动态
             const newPost = {
-                id: 'p_' + Date.now(),
-                author: 'me',
-                content: text,
-                images: pendingImages,
-                ts: Date.now(),
-                likes: [],
-                comments: []
+                id: 'p_' + Date.now(), author: 'me', content: text, images: pendingImages, ts: Date.now(), likes: [], comments: []
             };
             feedPosts.unshift(newPost);
             await saveFeed();
@@ -443,6 +492,10 @@
                 post.comments = post.comments || [];
                 post.comments.push({ author: taName, content: taMsg });
                 await saveFeed();
+                
+                // 触发未读消息
+                addNotice('comment', `<span class="mf-n-name">${taName}</span> 评论了你的动态：${taMsg}`);
+                
                 if (isFeedOpen) renderFeedUI();
             }, 3000 + Math.random() * 3000);
         } else if (chance < 0.8) {
@@ -451,6 +504,10 @@
                 if (!post.likes.includes(taName)) {
                     post.likes.push(taName);
                     await saveFeed();
+                    
+                    // 触发未读消息
+                    addNotice('like', `<span class="mf-n-name">${taName}</span> 赞了你的动态`);
+                    
                     if (isFeedOpen) renderFeedUI();
                 }
             }, 2000 + Math.random() * 2000);
@@ -464,13 +521,7 @@
             content = customReplies[Math.floor(Math.random() * customReplies.length)];
         }
         const newPost = {
-            id: 'p_ta_' + Date.now(),
-            author: 'ta',
-            content: content,
-            images: [],
-            ts: Date.now() - 1000 * 60 * Math.random() * 60,
-            likes: [],
-            comments: []
+            id: 'p_ta_' + Date.now(), author: 'ta', content: content, images: [], ts: Date.now() - 1000 * 60 * Math.random() * 60, likes: [], comments: []
         };
         feedPosts.unshift(newPost);
         saveFeed();
