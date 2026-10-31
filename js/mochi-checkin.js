@@ -1,5 +1,5 @@
 // js/mochi-checkin.js
-// 双向报备模块（支持双方直接报备、双方状态库管理、自定义背景）
+// 双向报备模块（修复查岗弹窗不显示Bug、增加测试指令）
 
 (function() {
     'use strict';
@@ -14,11 +14,9 @@
     let myCurrentStatus = { text: '还没报备', ts: Date.now() };
     let taCurrentStatus = { text: '还没报备', ts: Date.now() };
     
-    // 默认状态库
     let myStatusPool = ['在想你', '在发呆', '在看手机', '在吃饭', '在休息', '在忙'];
     let taStatusPool = ['在工作', '在看书', '在听歌', '在喝咖啡', '在散步', '在想你'];
 
-    // 当前正在管理的对象（'my' 或 'ta'）
     let currentManageTarget = 'my';
 
     function injectStyle() {
@@ -57,7 +55,6 @@
             .mc-status-box { width: 100%; background: rgba(var(--accent-color-rgb), 0.08); border-radius: 8px; padding: 8px 6px; min-height: 40px; display: flex; align-items: center; justify-content: center; }
             .mc-status-text { font-size: 13px; color: var(--accent-color); font-weight: 500; word-break: break-all; line-height: 1.4; }
             
-            /* 底部操作区 */
             .mc-action-area { margin-top: auto; padding: 30px 0; display: flex; justify-content: center; gap: 16px; position: relative; z-index: 2; flex-wrap: wrap; }
             .mc-action-btn { background: #fff; color: #333; border: 1px solid #ddd; border-radius: 30px; padding: 12px 24px; font-size: 15px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.05); transition: all 0.2s; display: flex; align-items: center; gap: 6px; }
             html[data-theme="dark"] .mc-action-btn { background: #2a2a2a; color: #ddd; border-color: #444; }
@@ -65,7 +62,7 @@
             .mc-btn-primary { background: var(--accent-color); color: #fff; border: none; box-shadow: 0 6px 20px rgba(var(--accent-color-rgb), 0.4); }
             
             /* 弹窗通用 */
-            .mc-modal { position: fixed; inset: 0; z-index: 99999; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+            .mc-modal { position: fixed; inset: 0; z-index: 999999; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
             .mc-modal.show { display: flex; }
             .mc-modal-content { background: #fff; width: 85%; max-width: 340px; border-radius: 20px; padding: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); max-height: 80vh; display: flex; flex-direction: column; }
             html[data-theme="dark"] .mc-modal-content { background: #2a2a2a; }
@@ -73,11 +70,11 @@
             .mc-modal-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
             
             .mc-option-btn { padding: 12px; border-radius: 10px; border: 1px solid #ddd; background: #f9f9f9; font-size: 14px; cursor: pointer; text-align: center; transition: background 0.2s; }
-            html[data-theme="dark"] .mc-option-btn { background: #333; border-color: #444; }
+            html[data-theme="dark"] .mc-option-btn { background: #333; border-color: #444; color:#fff; }
             .mc-option-btn:hover { background: #eee; }
             html[data-theme="dark"] .mc-option-btn:hover { background: #444; }
             
-            .mc-input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; outline: none; margin-bottom: 10px; font-size: 14px; background: #f9f9f9; }
+            .mc-input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; outline: none; margin-bottom: 10px; font-size: 14px; background: #f9f9f9; color: inherit;}
             html[data-theme="dark"] .mc-input { background: #333; border-color: #444; color: #fff; }
             
             .mc-btn-row { display: flex; gap: 10px; }
@@ -162,7 +159,6 @@
             </div>
             <div class="mc-main ${checkinBgImage ? 'has-bg' : ''}" id="mc-main-bg" style="${checkinBgImage ? `background-image:url(${checkinBgImage})` : ''}">
                 <div class="mc-cards-wrap">
-                    <!-- TA 卡片 -->
                     <div class="mc-card" id="mc-ta-card" title="点击设置TA的状态库">
                         <div class="mc-av">${taAv ? `<img src="${taAv}">` : '<i class="fas fa-user" style="color:#aaa;font-size:24px"></i>'}</div>
                         <div class="mc-name">${taName}</div>
@@ -171,7 +167,6 @@
                         <div class="mc-card-hint">点击管理TA的状态</div>
                     </div>
                     
-                    <!-- 我的卡片 -->
                     <div class="mc-card" id="mc-my-card" title="点击设置我的状态库">
                         <div class="mc-av">${myAv ? `<img src="${myAv}">` : '<i class="fas fa-user" style="color:#aaa;font-size:24px"></i>'}</div>
                         <div class="mc-name">${myName}</div>
@@ -187,36 +182,6 @@
                 </div>
             </div>
         `;
-
-        // 弹窗层
-        html += `
-            <!-- 选择状态弹窗（用于主动报备或查岗TA） -->
-            <div class="mc-modal" id="mc-select-modal">
-                <div class="mc-modal-content">
-                    <div class="mc-modal-title" id="mc-select-title">选择状态</div>
-                    <div class="mc-modal-list" id="mc-select-options"></div>
-                    <div class="mc-btn-row">
-                        <button class="mc-btn mc-btn-sec" id="mc-select-cancel">取消</button>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- 管理状态库弹窗 -->
-            <div class="mc-modal" id="mc-manage-modal">
-                <div class="mc-modal-content">
-                    <div class="mc-modal-title" id="mc-manage-title">管理状态库</div>
-                    <div style="display:flex; gap:8px; margin-bottom:12px;">
-                        <input class="mc-input" id="mc-new-status-input" placeholder="输入新状态..." style="margin-bottom:0;">
-                        <button class="mc-btn mc-btn-primary" id="mc-add-status-btn" style="flex:0 0 60px;">添加</button>
-                    </div>
-                    <div class="mc-modal-list" id="mc-manage-list"></div>
-                    <div class="mc-btn-row">
-                        <button class="mc-btn mc-btn-sec" id="mc-manage-close">关闭</button>
-                    </div>
-                </div>
-            </div>
-        `;
-
         container.innerHTML = html;
         bindEvents();
     }
@@ -248,7 +213,6 @@
             picker.click();
         };
 
-        // 查岗 TA (直接随机报备)
         document.getElementById('mc-check-ta-btn').onclick = async () => {
             const btn = document.getElementById('mc-check-ta-btn');
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 查岗中...';
@@ -276,12 +240,10 @@
             }, 800);
         };
 
-        // 我要报备 (选择我的状态)
         document.getElementById('mc-report-me-btn').onclick = () => {
             openSelectModal('my');
         };
 
-        // 点击卡片管理状态库
         document.getElementById('mc-ta-card').onclick = () => {
             currentManageTarget = 'ta';
             openManageModal();
@@ -290,45 +252,42 @@
             currentManageTarget = 'my';
             openManageModal();
         };
-        
-        document.getElementById('mc-select-cancel').onclick = () => document.getElementById('mc-select-modal').classList.remove('show');
-        document.getElementById('mc-manage-close').onclick = () => document.getElementById('mc-manage-modal').classList.remove('show');
-
-        document.getElementById('mc-add-status-btn').onclick = async () => {
-            const input = document.getElementById('mc-new-status-input');
-            const val = input.value.trim();
-            if (!val) return;
-            
-            if (currentManageTarget === 'my') {
-                if (!myStatusPool.includes(val)) myStatusPool.push(val);
-                await saveData(MY_STATUS_POOL_KEY, myStatusPool);
-            } else {
-                if (!taStatusPool.includes(val)) taStatusPool.push(val);
-                await saveData(TA_STATUS_POOL_KEY, taStatusPool);
-            }
-            
-            input.value = '';
-            renderManageList();
-            if (typeof showNotification === 'function') showNotification('状态已添加', 'success');
-        };
     }
 
-    // 选择状态弹窗（用于我的报备）
+    // 选择状态弹窗（用于主动报备）
     function openSelectModal(target) {
-        const modal = document.getElementById('mc-select-modal');
-        const title = document.getElementById('mc-select-title');
-        const optionsWrap = document.getElementById('mc-select-options');
+        let modal = document.getElementById('mc-global-select-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'mc-global-select-modal';
+            modal.className = 'mc-modal';
+            modal.innerHTML = `
+                <div class="mc-modal-content">
+                    <div class="mc-modal-title" id="mc-global-select-title">选择状态</div>
+                    <div class="mc-modal-list" id="mc-global-select-options"></div>
+                    <div class="mc-btn-row">
+                        <button class="mc-btn mc-btn-sec" id="mc-global-select-cancel">取消</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.getElementById('mc-global-select-cancel').onclick = () => modal.classList.remove('show');
+        }
+
+        const title = document.getElementById('mc-global-select-title');
+        const optionsWrap = document.getElementById('mc-global-select-options');
         
-        title.textContent = target === 'my' ? '选择你要报备的状态' : '选择TA的状态';
+        title.textContent = '选择你要报备的状态';
         optionsWrap.innerHTML = '';
         
-        const pool = target === 'my' ? myStatusPool : taStatusPool;
-
-        pool.forEach(status => {
+        myStatusPool.forEach(status => {
             const btn = document.createElement('button');
             btn.className = 'mc-option-btn';
             btn.textContent = status;
-            btn.onclick = () => submitStatus(target, status);
+            btn.onclick = () => {
+                modal.classList.remove('show');
+                submitStatus('my', status);
+            };
             optionsWrap.appendChild(btn);
         });
 
@@ -337,7 +296,10 @@
         otherBtn.innerHTML = '<span style="color:#576b95">自定义回答...</span>';
         otherBtn.onclick = () => {
             const customText = prompt('输入状态：');
-            if (customText && customText.trim()) submitStatus(target, customText.trim());
+            if (customText && customText.trim()) {
+                modal.classList.remove('show');
+                submitStatus('my', customText.trim());
+            }
         };
         optionsWrap.appendChild(otherBtn);
 
@@ -345,8 +307,6 @@
     }
 
     async function submitStatus(target, text) {
-        document.getElementById('mc-select-modal').classList.remove('show');
-        
         if (target === 'my') {
             myCurrentStatus = { text, ts: Date.now() };
             await saveData(MY_STATUS_KEY, myCurrentStatus);
@@ -356,25 +316,70 @@
         } else {
             taCurrentStatus = { text, ts: Date.now() };
             await saveData(TA_STATUS_KEY, taCurrentStatus);
-            const taName = (typeof settings !== 'undefined' && settings.partnerName) ? settings.partnerName : '梦角';
-            if (typeof addMessage === 'function') {
-                addMessage({ id: Date.now(), sender: taName, text: `[报备] 我现在${text}。`, timestamp: new Date(), type: 'normal', status: 'received', favorited: false });
-            }
         }
-        renderUI();
+        
+        // 只有主界面在显示时才渲染更新
+        const container = document.getElementById('mochi-checkin-container');
+        if (container && container.classList.contains('show')) {
+            renderUI();
+        }
         if (typeof showNotification === 'function') showNotification('报备成功', 'success');
     }
 
-    // 管理状态库渲染
+    // 管理状态库弹窗
+    function openManageModal() {
+        let modal = document.getElementById('mc-global-manage-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'mc-global-manage-modal';
+            modal.className = 'mc-modal';
+            modal.innerHTML = `
+                <div class="mc-modal-content">
+                    <div class="mc-modal-title" id="mc-global-manage-title">管理状态库</div>
+                    <div style="display:flex; gap:8px; margin-bottom:12px;">
+                        <input class="mc-input" id="mc-global-new-status" placeholder="输入新状态..." style="margin-bottom:0;">
+                        <button class="mc-btn mc-btn-primary" id="mc-global-add-status" style="flex:0 0 60px;">添加</button>
+                    </div>
+                    <div class="mc-modal-list" id="mc-global-manage-list"></div>
+                    <div class="mc-btn-row">
+                        <button class="mc-btn mc-btn-sec" id="mc-global-manage-close">关闭</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.getElementById('mc-global-manage-close').onclick = () => modal.classList.remove('show');
+            
+            document.getElementById('mc-global-add-status').onclick = async () => {
+                const input = document.getElementById('mc-global-new-status');
+                const val = input.value.trim();
+                if (!val) return;
+                
+                if (currentManageTarget === 'my') {
+                    if (!myStatusPool.includes(val)) myStatusPool.push(val);
+                    await saveData(MY_STATUS_POOL_KEY, myStatusPool);
+                } else {
+                    if (!taStatusPool.includes(val)) taStatusPool.push(val);
+                    await saveData(TA_STATUS_POOL_KEY, taStatusPool);
+                }
+                
+                input.value = '';
+                renderManageList();
+                if (typeof showNotification === 'function') showNotification('状态已添加', 'success');
+            };
+        }
+
+        document.getElementById('mc-global-manage-title').textContent = currentManageTarget === 'my' ? '管理我的状态库' : '管理TA的状态库';
+        renderManageList();
+        modal.classList.add('show');
+    }
+
     function renderManageList() {
-        const list = document.getElementById('mc-manage-list');
-        const title = document.getElementById('mc-manage-title');
+        const list = document.getElementById('mc-global-manage-list');
         if (!list) return;
         
-        title.textContent = currentManageTarget === 'my' ? '管理我的状态库' : '管理TA的状态库';
         const pool = currentManageTarget === 'my' ? myStatusPool : taStatusPool;
-
         list.innerHTML = '';
+        
         pool.forEach((status, idx) => {
             const d = document.createElement('div');
             d.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:10px; background:#f5f5f5; border-radius:8px;';
@@ -412,11 +417,6 @@
         });
     }
 
-    function openManageModal() {
-        document.getElementById('mc-manage-modal').classList.add('show');
-        renderManageList();
-    }
-
     // 拦截聊天，30% 概率 TA 主动查岗
     function hookSimulateReply() {
         if (typeof window.simulateReply !== 'function' || window.simulateReply._mochiCheckinHooked) return;
@@ -425,11 +425,17 @@
         const wrapped = function() {
             try { original.apply(this, arguments); } catch (e) {}
             
+            // 【测试指令】：发送 /测试查岗 可以强制触发
+            const input = document.getElementById('message-input');
+            if (input && (input.value === '/测试查岗' || window._forceCheckin)) {
+                window._forceCheckin = false;
+                showAskModal();
+                return;
+            }
+
             if (Math.random() < 0.30) {
                 setTimeout(() => {
-                    if (!document.getElementById('mochi-checkin-container')?.classList.contains('show')) {
-                        showAskModal();
-                    }
+                    showAskModal();
                 }, 2000);
             }
         };
@@ -437,23 +443,31 @@
         window.simulateReply = wrapped;
     }
 
-    // TA 问你在干嘛（弹窗选择）
+    // TA 问你在干嘛（独立全局弹窗）
     function showAskModal() {
-        let container = document.getElementById('mochi-checkin-container');
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'mochi-checkin-container';
-            document.body.appendChild(container);
-        }
-        if (!document.getElementById('mc-select-modal')) {
-            renderUI();
+        // 如果报备面板开着，不弹窗，防止冲突
+        const container = document.getElementById('mochi-checkin-container');
+        if (container && container.classList.contains('show')) return;
+
+        let modal = document.getElementById('mc-global-ask-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'mc-global-ask-modal';
+            modal.className = 'mc-modal';
+            modal.innerHTML = `
+                <div class="mc-modal-content">
+                    <div class="mc-modal-title">TA在查岗：你在干嘛呢？</div>
+                    <div class="mc-modal-list" id="mc-global-ask-options"></div>
+                    <div class="mc-btn-row">
+                        <button class="mc-btn mc-btn-sec" id="mc-global-ask-cancel">逃避查岗</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.getElementById('mc-global-ask-cancel').onclick = () => modal.classList.remove('show');
         }
         
-        const qModal = document.getElementById('mc-select-modal');
-        const title = document.getElementById('mc-select-title');
-        const optionsWrap = document.getElementById('mc-select-options');
-        
-        title.textContent = "TA在查岗：你在干嘛呢？";
+        const optionsWrap = document.getElementById('mc-global-ask-options');
         optionsWrap.innerHTML = '';
         
         myStatusPool.forEach(status => {
@@ -461,8 +475,8 @@
             btn.className = 'mc-option-btn';
             btn.textContent = status;
             btn.onclick = () => {
+                modal.classList.remove('show');
                 submitStatus('my', status);
-                // 额外追加一条 TA 的回复，显得更真实
                 setTimeout(() => {
                     const taName = (typeof settings !== 'undefined' && settings.partnerName) ? settings.partnerName : '梦角';
                     if (typeof addMessage === 'function') {
@@ -479,12 +493,13 @@
         otherBtn.onclick = () => {
             const customText = prompt('你在干嘛呢？');
             if (customText && customText.trim()) {
+                modal.classList.remove('show');
                 submitStatus('my', customText.trim());
             }
         };
         optionsWrap.appendChild(otherBtn);
 
-        qModal.classList.add('show');
+        modal.classList.add('show');
     }
 
     // 初始化
