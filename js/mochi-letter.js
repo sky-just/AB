@@ -1,5 +1,5 @@
 // js/mochi-letter.js
-// 他的来信模块（字卡拼写信件，10%概率触发，支持未读提示、自定义背景）
+// 他的来信模块（修复长文本遮挡、增加展开收起、支持背景）
 
 (function() {
     'use strict';
@@ -11,6 +11,7 @@
     let letterBgImage = '';
     let isLetterOpen = false;
     let currentViewingId = null;
+    let isExpanded = false; // 是否展开全文
 
     function injectStyle() {
         if (document.getElementById('mochi-letter-style')) return;
@@ -41,15 +42,18 @@
             
             .ml-unread-dot { position: absolute; top: 16px; right: 16px; width: 8px; height: 8px; background: #ff4757; border-radius: 50%; }
             
-            /* 信纸详情 */
-            .ml-detail { flex: 1; overflow-y: auto; padding: 24px 16px; display: none; flex-direction: column; }
+            /* 信纸详情排版大修 */
+            .ml-detail { flex: 1; display: none; flex-direction: column; height: 100%; overflow: hidden; }
+            
+            /* 滚动区域只包住信纸，不包按钮 */
+            .ml-scroll-area { flex: 1; overflow-y: auto; padding: 24px 16px 10px 16px; }
+            
             .ml-paper { 
-                background: #fffcf5; border-radius: 12px; padding: 30px 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); 
-                position: relative; min-height: 60%; background-size: cover; background-position: center; border: 1px solid #f0e6d2; 
+                background: #fffcf5; border-radius: 12px; padding: 30px 24px 40px 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); 
+                position: relative; background-size: cover; background-position: center; border: 1px solid #f0e6d2; 
             }
             html[data-theme="dark"] .ml-paper { background-color: #1e1c19; border-color: #3a352e; }
             
-            /* 有背景图时的文字保护 */
             .ml-paper.has-bg::before {
                 content: ''; position: absolute; inset: 0; background: rgba(0,0,0,0.35); border-radius: inherit; z-index: 0; pointer-events: none;
             }
@@ -58,11 +62,40 @@
             }
             
             .ml-greeting { font-size: 16px; font-weight: bold; margin-bottom: 20px; color: #8c6b4a; }
-            /* 连续段落，首行缩进，自动换行 */
-            .ml-content { font-size: 15.5px; line-height: 2.2; letter-spacing: 0.5px; word-break: break-word; text-indent: 2em; text-align: justify; }
-            .ml-sign { margin-top: 30px; text-align: right; font-size: 15px; font-style: italic; color: #8c6b4a; padding-right: 10px; }
             
-            .ml-detail-actions { margin-top: 20px; display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+            /* 核心修改：折叠机制 */
+            .ml-content { 
+                font-size: 15.5px; line-height: 2.2; letter-spacing: 0.5px; word-break: break-word; text-indent: 2em; text-align: justify;
+                max-height: 35vh; /* 默认最高只显示屏幕高度的35% */
+                overflow: hidden; 
+                position: relative;
+                transition: max-height 0.3s ease;
+            }
+            .ml-content.expanded { max-height: none; }
+            /* 折叠时底部加渐变遮罩，提示下面还有字 */
+            .ml-content:not(.expanded)::after {
+                content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 40px;
+                background: linear-gradient(transparent, #fffcf5);
+            }
+            html[data-theme="dark"] .ml-content:not(.expanded)::after { background: linear-gradient(transparent, #1e1c19); }
+            .ml-paper.has-bg .ml-content:not(.expanded)::after { background: linear-gradient(transparent, rgba(0,0,0,0.4)); }
+
+            .ml-expand-btn { display: block; width: 100%; text-align: center; font-size: 13px; color: #8c6b4a; cursor: pointer; margin-top: 10px; font-weight: bold; z-index: 2; position: relative; }
+            .ml-paper.has-bg .ml-expand-btn { color: #fff; }
+
+            .ml-sign { margin-top: 20px; text-align: right; font-size: 15px; font-style: italic; color: #8c6b4a; padding-right: 10px; }
+            
+            /* 底部按钮固定区，永远在屏幕最下方 */
+            .ml-detail-actions { 
+                flex-shrink: 0; 
+                background: #f4f1ea; 
+                padding: 12px 16px max(20px, env(safe-area-inset-bottom)); 
+                display: flex; justify-content: center; gap: 12px; flex-wrap: wrap;
+                border-top: 1px solid #e0dcd3;
+                z-index: 20;
+            }
+            html[data-theme="dark"] .ml-detail-actions { background: #1a1a1a; border-top-color: #333; }
+            
             .ml-btn { padding: 8px 18px; border-radius: 20px; border: 1px solid #d1c7b7; background: #fff; color: #8c6b4a; cursor: pointer; font-size: 13px; transition: all 0.2s; box-shadow: 0 2px 6px rgba(0,0,0,0.02); }
             .ml-btn:hover { background: #f0e6d2; }
             html[data-theme="dark"] .ml-btn { background: #2a2a2a; border-color: #444; color: #d3d3d3; }
@@ -76,7 +109,6 @@
     function addLetterEntry() {
         const advList = document.querySelector('#advanced-modal .settings-item-list');
         if (!advList) return;
-        
         let item = document.getElementById('letter-function');
         if (!item) {
             item = document.createElement('div');
@@ -88,7 +120,6 @@
             });
             advList.appendChild(item);
         }
-        
         const unread = letters.filter(l => !l.read).length;
         item.innerHTML = `<i class="fas fa-envelope-open-text"></i><span>他的来信 ${unread > 0 ? `<span style="background:#ff4757;color:#fff;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:top;">${unread}</span>` : ''}</span>`;
     }
@@ -123,55 +154,39 @@
         } catch (e) {}
     }
 
-    // 生成一封信
     function generateLetter() {
         const pool = (typeof customReplies !== 'undefined' && Array.isArray(customReplies)) ? customReplies.filter(t => typeof t === 'string' && t.trim()) : [];
         if (pool.length === 0) return null;
 
-        // 随机抽取 10 到 50 张字卡
         const count = Math.floor(Math.random() * 41) + 10; 
         let lines = [];
         
         for (let i = 0; i < count; i++) {
             const sentence = pool[Math.floor(Math.random() * pool.length)].trim();
-            if (lines.length > 0 && lines[lines.length - 1] === sentence) {
-                i--; continue; // 避免连续重复
-            }
+            if (lines.length > 0 && lines[lines.length - 1] === sentence) { i--; continue; }
             lines.push(sentence);
         }
 
-        // ✨ 核心修改：用逗号连接，变成连贯的段落，不再每一行换行
         let content = lines.join('，');
-        // 如果最后没有标点，加个句号
         if (!/[。！？…]$/.test(content)) content += '。';
 
-        return {
-            id: 'l_' + Date.now(),
-            ts: Date.now(),
-            content: content,
-            read: false
-        };
+        return { id: 'l_' + Date.now(), ts: Date.now(), content: content, read: false };
     }
 
     function hookSimulateReply() {
         if (typeof window.simulateReply !== 'function' || window.simulateReply._mochiLetterHooked) return;
         const original = window.simulateReply;
-        
         const wrapped = function() {
             try { original.apply(this, arguments); } catch (e) {}
-            
-            if (Math.random() < 0.10) { // 10% 概率
+            if (Math.random() < 0.10) {
                 const newLetter = generateLetter();
                 if (newLetter) {
                     setTimeout(async () => {
                         letters.unshift(newLetter);
                         if (letters.length > 30) letters.length = 30;
                         await saveLetters();
-                        
                         const taName = (typeof settings !== 'undefined' && settings.partnerName) ? settings.partnerName : '梦角';
-                        if (typeof showNotification === 'function') {
-                            showNotification(`💌 收到一封来自 ${taName} 的来信，请前往【高级功能-他的来信】查看`, 'info', 5000);
-                        }
+                        if (typeof showNotification === 'function') showNotification(`💌 收到一封来自 ${taName} 的来信，请前往【高级功能-他的来信】查看`, 'info', 5000);
                         if (isLetterOpen) renderLetterUI();
                     }, 2000);
                 }
@@ -229,12 +244,16 @@
 
         html += `</div>`;
 
+        // 详情层：使用 scroll-area 包住信纸
         html += `
             <div class="ml-detail" id="ml-detail">
-                <div class="ml-paper" id="ml-paper-bg">
-                    <div class="ml-greeting">亲爱的 ${myName}：</div>
-                    <div class="ml-content" id="ml-detail-content"></div>
-                    <div class="ml-sign" id="ml-detail-sign"></div>
+                <div class="ml-scroll-area">
+                    <div class="ml-paper" id="ml-paper-bg">
+                        <div class="ml-greeting">亲爱的 ${myName}：</div>
+                        <div class="ml-content" id="ml-detail-content"></div>
+                        <div class="ml-expand-btn" id="ml-expand-btn" style="display:none;" onclick="window._mlToggleExpand()">展开全文 ▼</div>
+                        <div class="ml-sign" id="ml-detail-sign"></div>
+                    </div>
                 </div>
                 <div class="ml-detail-actions">
                     <button class="ml-btn" id="ml-change-bg-btn"><i class="fas fa-image"></i> 更换信纸</button>
@@ -252,6 +271,7 @@
         const l = letters.find(x => x.id === id);
         if (!l) return;
         currentViewingId = id;
+        isExpanded = false; // 每次打开默认折叠
         
         if (!l.read) {
             l.read = true;
@@ -264,10 +284,22 @@
         
         document.getElementById('ml-list-area').style.display = 'none';
         document.getElementById('ml-detail').style.display = 'flex';
-        document.getElementById('ml-detail-content').textContent = l.content;
+        
+        const contentEl = document.getElementById('ml-detail-content');
+        contentEl.textContent = l.content;
+        contentEl.classList.remove('expanded');
+
+        // 判断是否需要显示“展开全文”按钮
+        const expandBtn = document.getElementById('ml-expand-btn');
+        if (l.content.length > 150) { // 如果字数超过 150，就显示展开按钮
+            expandBtn.style.display = 'block';
+            expandBtn.innerHTML = '展开全文 ▼';
+        } else {
+            expandBtn.style.display = 'none';
+        }
+
         document.getElementById('ml-detail-sign').innerHTML = `${taName}<br><span style="font-size:12px;opacity:0.7;margin-top:8px;display:inline-block;">${dateStr}</span>`;
 
-        // 应用背景
         const paper = document.getElementById('ml-paper-bg');
         if (letterBgImage) {
             paper.style.backgroundImage = `url(${letterBgImage})`;
@@ -275,6 +307,21 @@
         } else {
             paper.style.backgroundImage = '';
             paper.classList.remove('has-bg');
+        }
+    };
+
+    window._mlToggleExpand = function() {
+        const contentEl = document.getElementById('ml-detail-content');
+        const btn = document.getElementById('ml-expand-btn');
+        isExpanded = !isExpanded;
+        if (isExpanded) {
+            contentEl.classList.add('expanded');
+            btn.innerHTML = '收起内容 ▲';
+        } else {
+            contentEl.classList.remove('expanded');
+            btn.innerHTML = '展开全文 ▼';
+            // 收起时滚动到信纸顶部，方便阅读
+            document.querySelector('.ml-scroll-area').scrollTop = 0;
         }
     };
 
@@ -300,7 +347,6 @@
             isLetterOpen = false;
         };
 
-        // 换信纸背景功能
         const bgBtn = document.getElementById('ml-change-bg-btn');
         if (bgBtn) {
             bgBtn.onclick = () => {
@@ -315,7 +361,6 @@
                         if (typeof optimizeImage === 'function') {
                             const b64 = await optimizeImage(file, 800, 0.7);
                             await saveLetterBg(b64);
-                            // 立即应用
                             const paper = document.getElementById('ml-paper-bg');
                             paper.style.backgroundImage = `url(${b64})`;
                             paper.classList.add('has-bg');
@@ -329,11 +374,9 @@
         }
     }
 
-    // 初始化
     loadLetters().then(() => {
         injectStyle();
         hookSimulateReply();
-        
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => setInterval(addLetterEntry, 2000));
         } else {
